@@ -47,7 +47,7 @@ class Game:
         self.dead = False
         self.framerate = 60
         self.bounce_x = 64
-        self.counter = 0
+        self.counter = 180
         self.gravity = -.6
         self.screen = 0
         self.score = 0
@@ -79,6 +79,7 @@ class Game:
                 with open(self.sett_file, 'wb') as f: f.write(bytes([0b00000110]))
             with open(self.sett_file, 'rb') as f:
                 sett = ord(f.read(1))
+                self.seen_tutorial = bool((sett>>3)&0b1)
                 self.music_on = bool((sett>>2)&0b1)
                 self.sfx_on = bool((sett>>1)&0b1)
                 self.hitbox = bool(sett&0b1)
@@ -102,21 +103,21 @@ class Game:
             # If key pressed down...
             if e.type == pg.KEYDOWN:
                 # ... and the game didn't start and [<] is pressed ...
-                if e.key == pg.K_LEFT and not self.game_started:
+                if e.key in [pg.K_LEFT, pg.K_a] and not self.game_started:
                     # ... start the game, music (if music is on) and start moving the player to the left
                     self.game_started = True
                     self.start_time = pg.time.get_ticks()
                     self.dir = -1
                     if self.music_on: self.sfx['music'].play(-1)
                 # ... and the game didn't start and [>] is pressed ...
-                if e.key == pg.K_RIGHT and not self.game_started:
+                if e.key in [pg.K_RIGHT, pg.K_d] and not self.game_started:
                     # ... start the game, music (if music is on) and start moving the player to the right
                     self.game_started = True
                     self.start_time = pg.time.get_ticks()
                     self.dir = 1
                     if self.music_on: self.sfx['music'].play(-1)
                 # ... and [  ---  ] or [^] pressed and game started and you can jump (on ground) ...
-                if e.key in [pg.K_SPACE, pg.K_UP] and self.game_started and self.can_jump:
+                if e.key in [pg.K_SPACE, pg.K_UP, pg.K_w] and self.game_started and self.can_jump:
                     # ... jump and play sound of jump
                     self.vel_y = 12
                     if self.sfx_on: self.sfx['jump'].play()
@@ -147,17 +148,16 @@ class Game:
                         # open settings file
                         with open(self.sett_file, 'wb') as f:
                             # write settings into a single byte
-                            sett_byte = (int(self.music_on)<<2) | (int(self.sfx_on)<<1) | int(self.hitbox)
+                            sett_byte = (int(self.seen_tutorial)<<3) | (int(self.music_on)<<2) | (int(self.sfx_on)<<1) | int(self.hitbox)
 
                             # and write to the file
                             f.write(bytes([sett_byte]))
 
     def tick(self): # the thing that does everything on every frame
+        self.counter -= 1
 
         # if player ded
         if self.dead:
-            # decrease counter (we want to wait, so the player doesn't immediately teleport to the start)
-            self.counter -= 1
             # TODO: Play some animation (prob will never do that)
             # if counter reached 0
             if self.counter == 0:
@@ -165,6 +165,7 @@ class Game:
                 self.game_started = False
                 self.dead = False
                 self.screen = 0
+                self.counter = 2147483647
                 self.pos = [self.win_size[0]//2, self.win_size[1]-260]
                 self.level = random.choice(self.levels)
         
@@ -207,7 +208,7 @@ class Game:
                             # Ok. This will be hard to explain, but i will try my best
                             if rect.colliderect(x-hw, y-h, *self.size):
                                 # Check if player hit the side of a platform
-                                if y > rect.top+1+abs(self.vel_y) and (x > rect.right+hw-4-dx or x < rect.left-hw+4+dx):
+                                if y > rect.top+1+abs(self.vel_y) and (x > rect.right+hw-1-dx or x < rect.left-hw+1+dx):
                                     # cancel the movement
                                     x -= dx
                                     dx = 0
@@ -283,7 +284,6 @@ class Game:
         for x in [0,1,2]:
             for y in [-1,0,1]:
                 self.win.blit(gfx['bg_bricks'], (x*512-166-83*self.screen, y*512-96*self.screen))
-                #if self.screen!=0: self.win.blit(self.gfx['highlight'], (x*512-166-83*self.screen, 556))
 
         # Draw logo & UI
         if self.screen == 0:
@@ -291,8 +291,8 @@ class Game:
             self.win.blit(gfx['menu_button'].subsurface(44*pg.Rect(12,12,44,44).collidepoint(pg.mouse.get_pos()), 0, 44, 44), (12, 12))
             if self.show_menu:
                 self.win.blit(self.menu, (12, 68))
-                self.win.blit(self.gfx['checkbox'].subsurface(36*self.music_on, 0, 36, 36), (24, 80))
-                self.win.blit(self.gfx['checkbox'].subsurface(36*self.sfx_on, 0, 36, 36), (24, 124))
+                self.win.blit(gfx['checkbox'].subsurface(36*self.music_on, 0, 36, 36), (24, 80))
+                self.win.blit(gfx['checkbox'].subsurface(36*self.sfx_on, 0, 36, 36), (24, 124))
                 self.win.blit(gfx['music'], (68, 84))
                 self.win.blit(gfx['sfx'], (68, 128))
 
@@ -370,7 +370,7 @@ class Game:
             timer = f'{minutes}:{seconds}'
             chars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':']
             for i, char in enumerate(timer):
-                tmp.blit(self.gfx['digits'].subsurface(20*chars.index(char), 0, 20, 32), ((i+1)*24, 8))
+                tmp.blit(gfx['digits'].subsurface(20*chars.index(char), 0, 20, 32), ((i+1)*24, 8))
 
             self.win.blit(tmp, (self.win_size[0]-156, 0))
 
@@ -381,9 +381,26 @@ class Game:
 
             chars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':']
             for i, char in enumerate(str(self.score)):
-                tmp.blit(self.gfx['digits'].subsurface(20*chars.index(char), 0, 20, 32), (50+i*24-len(str(self.score))*12, 8))
+                tmp.blit(gfx['digits'].subsurface(20*chars.index(char), 0, 20, 32), (50+i*24-len(str(self.score))*12, 8))
 
             self.win.blit(tmp, (self.win_size[0]//2-48, 0))
+
+        # Draw tutuorial
+        if not self.seen_tutorial:
+            if self.counter < 0 and not self.game_started:
+                self.win.blit(gfx['lr_tutorial'], ((self.win_size[0]-gfx['lr_tutorial'].get_size()[0])//2, 24))
+            elif -720 < self.counter < 0 and self.game_started:
+                self.win.blit(gfx['jump_tutorial'], ((self.win_size[0]-gfx['jump_tutorial'].get_size()[0])//2, 64))
+            elif self.game_started and self.counter < -720:
+                self.seen_tutorial = True
+                if self.sett_file:
+                    # open settings file
+                    with open(self.sett_file, 'wb') as f:
+                        # write settings into a single byte
+                        sett_byte = (int(self.seen_tutorial)<<3) | (int(self.music_on)<<2) | (int(self.sfx_on)<<1) | int(self.hitbox)
+
+                        # and write to the file
+                        f.write(bytes([sett_byte]))
 
         # Refresh
         pg.display.flip()
@@ -401,10 +418,15 @@ class Game:
             'checkbox': 'checkbox.png',
             'music': 'music.png',
             'sfx': 'sfx.png',
-            'digits': 'digits.png'
+            'digits': 'digits.png',
+            'lr_tutorial': ('left_right_tutorial.png', 2),
+            'jump_tutorial': ('jump_tutorial.png', 2)
         }
         for key, value in gfx_paths.items():
-            self.gfx[key] = utils.load_img(os.path.join(gfx_path, value))
+            if len(value) == 2:
+                self.gfx[key] = utils.load_img(os.path.join(gfx_path, value[0]), None, (value[1], value[1]))
+            else:
+                self.gfx[key] = utils.load_img(os.path.join(gfx_path, value))
 
         # Load sounds
         sfx_path = os.path.abspath('./res/sfx/')
