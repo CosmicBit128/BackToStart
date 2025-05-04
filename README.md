@@ -17,3 +17,6 @@ Trapped in a looping arena, your character auto-moves from side to side. Dodge h
   - **Normal:** Default, you can normally stand on it
   - **Yellow:** You can jump onto it from bottom
   - **Aqua:** You can bounce and change direction (you don't get a point from it)
+
+#### Credits
+Music: [The Cynic Project](https://pixelsphere.org)
