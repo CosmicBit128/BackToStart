@@ -44,21 +44,24 @@ class Game:
         self.game_started = False
         self.show_menu = False
         self.can_jump = False
+        self.paused = False
         self.dead = False
         self.framerate = 60
         self.bounce_x = 64
         self.counter = 180
         self.gravity = -.6
         self.screen = 0
+        self.timer = 0
         self.score = 0
         self.speed = 4
         self.vel_y = 0
         self.dir = 0
+        self.particles: list[Particle] = []
         self.size = (15*4, 12*4)
         self.pos = [self.win_size[0]//2, self.win_size[1]-260]
 
         # Create the menu GUI using [slicing](https://en.wikipedia.org/wiki/9-slice_scaling)
-        self.menu = utils.load_img(utils.get_slice(42, 26, pg.image.load('res/gfx/gui.png')))
+        self.menu = utils.load_img(utils.get_slice(42, 26, pg.image.load('res/gfx/gui/gui.png')))
 
         # Load levels
         w, h = self.win_size
@@ -79,12 +82,15 @@ class Game:
                 with open(self.sett_file, 'wb') as f: f.write(bytes([0b00000110]))
             with open(self.sett_file, 'rb') as f:
                 sett = ord(f.read(1))
+                self.seen_welcome = bool((sett>>4)&0b1)
                 self.seen_tutorial = bool((sett>>3)&0b1)
                 self.music_on = bool((sett>>2)&0b1)
                 self.sfx_on = bool((sett>>1)&0b1)
                 self.hitbox = bool(sett&0b1)
 
         self.load_resources()
+
+        self.welcome_pos = ((self.win_size[0]-self.gfx['welcome'].get_size()[0])//2, 128)
 
     def run(self):
         # Mainloop
@@ -122,12 +128,20 @@ class Game:
                     self.vel_y = 12
                     if self.sfx_on: self.sfx['jump'].play()
 
+                # pause
+                if e.key == pg.K_ESCAPE:
+                    if self.paused:
+                        pg.mixer.unpause()
+                    else:
+                        pg.mixer.pause()
+                    self.paused = not self.paused
+
                 # if any key pressed, hide the menu
                 self.show_menu = False
 
             # If mouse clicked...
+            mpos = pg.mouse.get_pos() # get mouse coordinates
             if e.type == pg.MOUSEBUTTONDOWN:
-                mpos = pg.mouse.get_pos() # get mouse coordinates
                 if pg.Rect(12,12,44,44).collidepoint(mpos): # and mouse touching menu button
                     # toggle menu vissible
                     self.show_menu = not self.show_menu
@@ -148,13 +162,44 @@ class Game:
                         # open settings file
                         with open(self.sett_file, 'wb') as f:
                             # write settings into a single byte
-                            sett_byte = (int(self.seen_tutorial)<<3) | (int(self.music_on)<<2) | (int(self.sfx_on)<<1) | int(self.hitbox)
+                            sett_byte = (int(self.seen_welcome)<<4) | (int(self.seen_tutorial)<<3) | (int(self.music_on)<<2) | (int(self.sfx_on)<<1) | int(self.hitbox)
 
                             # and write to the file
                             f.write(bytes([sett_byte]))
+            
+            if e.type == pg.MOUSEBUTTONUP:
+                if pg.Rect(self.welcome_pos[0]+32, self.welcome_pos[1]+412, 132, 68).collidepoint(mpos) and not self.seen_welcome:
+                    self.seen_welcome = True
+                    if self.sett_file:
+                        with open(self.sett_file, 'wb') as f:
+                            sett_byte = (int(self.seen_welcome)<<4) | (int(self.seen_tutorial)<<3) | (int(self.music_on)<<2) | (int(self.sfx_on)<<1) | int(self.hitbox)
+                            f.write(bytes([sett_byte]))
+                if self.paused:
+                    bx = (self.win_size[0]-192)//2
+                    if pg.Rect(bx, 320, 192, 60).collidepoint(mpos):
+                        # Resume
+                        self.paused = False
+                        pg.mixer.unpause()
+                        
+                    if pg.Rect(bx, 400, 192, 60).collidepoint(mpos):
+                        # Reset
+                        self.game_started = False
+                        self.paused = False
+                        self.counter = 180
+                        self.screen = 0
+                        self.timer = 0
+                        self.score = 0
+                        self.dir = 0
+                        self.pos = [self.win_size[0]//2, self.win_size[1]-260]
+                        self.sfx['music'].stop()
+
+                    if pg.Rect(bx, 480, 192, 60).collidepoint(mpos):
+                        # Quit
+                        pg.event.post(pg.event.Event(pg.QUIT))
 
     def tick(self): # the thing that does everything on every frame
-        self.counter -= 1
+        if self.seen_welcome: self.counter -= 1
+        self.clock.tick(self.framerate)
 
         # if player ded
         if self.dead:
@@ -170,7 +215,7 @@ class Game:
                 self.level = random.choice(self.levels)
         
         # if player not ded
-        else:
+        elif not self.paused:
 
             # Get current position and size as smaller variables for convenience
             x, y = self.pos
@@ -228,10 +273,15 @@ class Game:
 
                 
                 # Check if player is between the side boundaries
-                if x < 256 + hw or x > self.win_size[0] - 256 - hw:
+                if (x < 256 + hw or x > self.win_size[0] - 256 - hw) and not self.can_jump:
                     if y > self.win_size[1] - 83 - h:
                         y = self.win_size[1] - 83 - h
                         self.can_jump = True
+                        if self.vel_y < -20:
+                            for i in range(7):
+                                vel = [random.randint(-50, 50)/25, -(random.randint(100, 120)/20)]
+                                duration = random.randint(72, 240)
+                                self.particles.append(Particle([x, y], vel, self.screen, duration, self.win_size[1]))
                         self.vel_y = 0
                     else:
                         self.can_jump = False
@@ -272,6 +322,15 @@ class Game:
                     self.dead = True
                     self.counter = 30
                     self.score = 0
+
+            if self.game_started:
+                self.timer += 1
+            
+        for p in self.particles:
+            if p.passed_time > p.dur:
+                self.particles.remove(p)
+                continue
+            p.update()
 
     def render(self):
         time = pg.time.get_ticks()
@@ -356,14 +415,20 @@ class Game:
             pg.draw.rect(self.win, '#ff0000', (self.pos[0] - self.size[0]//2, self.pos[1] - self.size[1], *self.size), 1)
             vel = (4*self.dir*self.speed, 4*-self.vel_y)
             pg.draw.line(self.win, '#00ff00', (self.pos[0], self.pos[1]-self.size[1]//2), (self.pos[0]+vel[0], self.pos[1]-self.size[1]//2+vel[1]), 3)
+        
+        for p in self.particles:
+            if p.screen == self.screen:
+                self.win.blit(gfx['bricks'].subsurface(p.tex_pos[0], p.tex_pos[1], 8, 8), (p.pos[0]-4, p.pos[1]-4))
+                #pg.draw.rect(self.win, '#808080', (p.pos[0]-4, p.pos[1]-4, 8, 8), 2)
+                if self.hitbox: pg.draw.rect(self.win, '#ff00ff', (p.pos[0]-4, p.pos[1]-4, 8, 8), 1)
 
         # Draw timer
         if self.game_started:
             tmp = pg.Surface((156, 48), pg.SRCALPHA)
             pg.draw.rect(tmp, '#ffffff40', (0, 0, 156, 48), 0, -1, -1, -1, 4)
             
-            minutes = int((time - self.start_time)//60000)
-            seconds = int((time - self.start_time)//1000)%60
+            minutes = self.timer//3600
+            seconds = int(self.timer//60)%60
             minutes = f'{'0' if minutes < 10 else ''}{minutes}'
             seconds = f'{'0' if seconds < 10 else ''}{seconds}'
 
@@ -386,7 +451,7 @@ class Game:
             self.win.blit(tmp, (self.win_size[0]//2-48, 0))
 
         # Draw tutuorial
-        if not self.seen_tutorial:
+        if not self.seen_tutorial and self.seen_welcome:
             if self.counter < 0 and not self.game_started:
                 self.win.blit(gfx['lr_tutorial'], ((self.win_size[0]-gfx['lr_tutorial'].get_size()[0])//2, 24))
             elif -720 < self.counter < 0 and self.game_started:
@@ -397,10 +462,58 @@ class Game:
                     # open settings file
                     with open(self.sett_file, 'wb') as f:
                         # write settings into a single byte
-                        sett_byte = (int(self.seen_tutorial)<<3) | (int(self.music_on)<<2) | (int(self.sfx_on)<<1) | int(self.hitbox)
+                        sett_byte = (int(self.seen_welcome)<<4) | (int(self.seen_tutorial)<<3) | (int(self.music_on)<<2) | (int(self.sfx_on)<<1) | int(self.hitbox)
 
                         # and write to the file
                         f.write(bytes([sett_byte]))
+
+        mpos = pg.mouse.get_pos()
+        if not self.seen_welcome:
+            welcome_pos = self.welcome_pos
+            self.win.blit(gfx['welcome'], welcome_pos)
+            self.win.blit(pg.transform.scale_by(gfx['player'].subsurface(72, (time//200%2)*48, 18*4, 12*4), 2), (welcome_pos[0]+572, welcome_pos[1]+40))
+            if pg.Rect(welcome_pos[0]+32, welcome_pos[1]+412, 132, 68).collidepoint(mpos):
+                if pg.mouse.get_pressed()[0]:
+                    self.win.blit(gfx['hide'].subsurface(0, 136, 132, 68), (welcome_pos[0]+32, welcome_pos[1]+412))
+                else:
+                    self.win.blit(gfx['hide'].subsurface(0, 68, 132, 68), (welcome_pos[0]+32, welcome_pos[1]+412))
+            else:
+                self.win.blit(gfx['hide'].subsurface(0, 0, 132, 68), (welcome_pos[0]+32, welcome_pos[1]+412))
+
+        if self.paused:
+            tmp = pg.Surface(self.win_size, pg.SRCALPHA)
+            tmp.fill((0, 0, 0, 64))
+            self.win.blit(tmp, (0, 0))
+
+            self.win.blit(gfx['paused'], ((self.win_size[0]-gfx['paused'].get_size()[0])//2, 240))
+
+            bx = (self.win_size[0]-192)//2
+            # Resume
+            if pg.Rect(bx, 320, 192, 60).collidepoint(mpos):
+                if pg.mouse.get_pressed()[0]:
+                    self.win.blit(gfx['resume'].subsurface(0, 120, 192, 60), (bx, 320))
+                else:
+                    self.win.blit(gfx['resume'].subsurface(0, 60, 192, 60), (bx, 320))
+            else:
+                self.win.blit(gfx['resume'].subsurface(0, 0, 192, 60), (bx, 320))
+            
+            # Reset
+            if pg.Rect(bx, 400, 192, 60).collidepoint(mpos):
+                if pg.mouse.get_pressed()[0]:
+                    self.win.blit(gfx['reset'].subsurface(0, 120, 192, 60), (bx, 400))
+                else:
+                    self.win.blit(gfx['reset'].subsurface(0, 60, 192, 60), (bx, 400))
+            else:
+                self.win.blit(gfx['reset'].subsurface(0, 0, 192, 60), (bx, 400))
+
+            # Quit
+            if pg.Rect(bx, 480, 192, 60).collidepoint(mpos):
+                if pg.mouse.get_pressed()[0]:
+                    self.win.blit(gfx['quit'].subsurface(0, 120, 192, 60), (bx, 480))
+                else:
+                    self.win.blit(gfx['quit'].subsurface(0, 60, 192, 60), (bx, 480))
+            else:
+                self.win.blit(gfx['quit'].subsurface(0, 0, 192, 60), (bx, 480))
 
         # Refresh
         pg.display.flip()
@@ -409,18 +522,27 @@ class Game:
         # Load graphics
         gfx_path = os.path.abspath('./res/gfx/')
         gfx_paths = {
-            'logo': 'logo.png',
-            'bricks': 'bricks.png',
-            'bg_bricks': 'bg_bricks.png',
-            'lava': 'lava.png',
+            'bg_bricks': 'environment/bg_bricks.png',
+            'bricks': 'environment/bricks.png',
+            'lava': 'environment/lava.png',
+
+            'checkbox': 'gui/checkbox.png',
+            'menu_button': 'gui/menu.png',
+            'welcome': 'gui/welcome.png',
+            'hide': 'gui/hide.png',
+            'resume': 'gui/resume.png',
+            'reset': 'gui/reset.png',
+            'quit': 'gui/quit.png',
+
+            'lr_tutorial': ('text/left_right_tutorial.png', 2),
+            'jump_tutorial': ('text/jump_tutorial.png', 2),
+            'digits': 'text/digits.png',
+            'paused': 'text/paused.png',
+            'music': 'text/music.png',
+            'sfx': 'text/sfx.png',
+
             'player': 'player.png',
-            'menu_button': 'menu.png',
-            'checkbox': 'checkbox.png',
-            'music': 'music.png',
-            'sfx': 'sfx.png',
-            'digits': 'digits.png',
-            'lr_tutorial': ('left_right_tutorial.png', 2),
-            'jump_tutorial': ('jump_tutorial.png', 2)
+            'logo': 'logo.png'
         }
         for key, value in gfx_paths.items():
             if len(value) == 2:
@@ -447,6 +569,29 @@ class Platform:
 
     def get_rect(self):
         return pg.Rect(self.pos, self.size)
+    
+class Particle:
+    def __init__(self, pos: tuple[int], velocity, screen: int, duration: int, wh):
+        self.pos = pos
+        self.vel = velocity
+        self.screen = screen
+        self.dur = duration
+        self.passed_time = 0
+        self.tex_pos = (random.randint(0, 504), random.randint(0, 504))
+        self.wh = wh # Window Height
+
+    def update(self):
+        self.passed_time += 1
+
+        self.vel[0] *= 0.96
+        self.vel[1] += 0.4
+
+        self.pos[0] += self.vel[0]
+        self.pos[1] += self.vel[1]
+
+        if self.pos[1] > self.wh - 136:
+            self.pos[1] = self.wh- 136
+
         
 
 
